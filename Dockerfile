@@ -1,4 +1,4 @@
-FROM python:3.10-slim-bullseye
+FROM python:3.10-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=10000
@@ -13,4 +13,4 @@ COPY last.pt .
 
 EXPOSE $PORT
 
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "10000"]
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port $PORT"]
