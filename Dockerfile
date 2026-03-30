@@ -6,11 +6,7 @@ ENV PORT=10000
 WORKDIR /app
 
 COPY requirements.txt .
-
-# تثبيت المتطلبات مع منع تثبيت opencv-python
-RUN pip install --no-cache-dir --no-deps -r requirements.txt && \
-    pip install --no-cache-dir --no-deps fastapi uvicorn ultralytics numpy pillow python-multipart pydantic && \
-    pip install --no-cache-dir opencv-python-headless==4.10.0.84
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 COPY last.pt .
