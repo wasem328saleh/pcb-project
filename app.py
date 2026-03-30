@@ -3,15 +3,17 @@
 """
 PCB Defect Detection API
 RESTful API للكشف عن عيوب لوحات الدوائر المطبوعة باستخدام YOLOv8
+بدون OpenCV - يعمل على Render و Hugging Face Spaces
 """
 
 import os
 import sys
 import base64
 import numpy as np
-import cv2
 from datetime import datetime
 from typing import List, Optional
+import io
+from PIL import Image, ImageDraw, ImageFont
 import uvicorn
 
 from fastapi import FastAPI, File, UploadFile, HTTPException, Query
@@ -85,19 +87,36 @@ class HealthResponse(BaseModel):
     timestamp: str
 
 # ============================================
-# دوال مساعدة
+# دوال مساعدة (بدون OpenCV)
 # ============================================
 
-def image_to_base64(image_array):
-    """تحويل الصورة numpy array إلى Base64"""
-    _, buffer = cv2.imencode('.jpg', image_array)
-    return base64.b64encode(buffer).decode('utf-8')
+def image_from_bytes(contents: bytes) -> np.ndarray:
+    """تحويل bytes إلى numpy array باستخدام PIL"""
+    img = Image.open(io.BytesIO(contents))
+    return np.array(img)
 
-def draw_defects_with_language(image_array, results, lang="en"):
+def image_to_base64(image_array: np.ndarray) -> str:
+    """تحويل numpy array إلى Base64"""
+    img = Image.fromarray(image_array)
+    buffer = io.BytesIO()
+    img.save(buffer, format='JPEG', quality=95)
+    return base64.b64encode(buffer.getvalue()).decode('utf-8')
+
+def draw_defects_with_language(image_array: np.ndarray, results, lang: str = "en") -> np.ndarray:
     """
     رسم العيوب على الصورة مع تسميات باللغة المحددة
+    باستخدام PIL بدلاً من OpenCV
     """
-    img = image_array.copy()
+    # تحويل إلى PIL Image
+    img = Image.fromarray(image_array)
+    draw = ImageDraw.Draw(img)
+    
+    # محاولة تحميل خط عربي (إذا لم يوجد، يستخدم الخط الافتراضي)
+    try:
+        # محاولة استخدام خط يدعم العربية
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 16)
+    except:
+        font = ImageFont.load_default()
     
     for r in results:
         if r.boxes is not None:
@@ -116,13 +135,14 @@ def draw_defects_with_language(image_array, results, lang="en"):
                 x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                 
                 # رسم المربع
-                cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                draw.rectangle([x1, y1, x2, y2], outline="green", width=3)
                 
-                # رسم النص
-                cv2.putText(img, label, (x1, y1 - 5), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                # رسم النص (مع خلفية شفافة)
+                bbox_text = draw.textbbox((x1, y1 - 20), label, font=font)
+                draw.rectangle(bbox_text, fill="green")
+                draw.text((x1, y1 - 20), label, fill="white", font=font)
     
-    return img
+    return np.array(img)
 
 # ============================================
 # إنشاء تطبيق FastAPI
@@ -252,11 +272,11 @@ async def detect_defects(
         raise HTTPException(status_code=400, detail="الملف المرفق ليس صورة")
     
     try:
-        # قراءة الصورة
+        # قراءة الصورة (بدون OpenCV)
         contents = await file.read()
-        image_array = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
+        image_array = image_from_bytes(contents)
         
-        if image_array is None:
+        if image_array is None or image_array.size == 0:
             raise HTTPException(status_code=400, detail="لم يتمكن النظام من قراءة الصورة")
         
         # تحويل classes_filter إلى قائمة أرقام
@@ -520,7 +540,6 @@ async def test_ui():
             const resultDiv = document.getElementById('result');
             const loadingDiv = document.getElementById('loading');
             
-            // عرض قيم الشرائح
             document.getElementById('conf').oninput = () => {
                 document.getElementById('confValue').innerText = document.getElementById('conf').value;
             };
@@ -576,14 +595,12 @@ async def test_ui():
                     html += `<p><strong>🔍 تم اكتشاف ${data.num_defects} عيب/عيوب</strong></p>`;
                     html += `<p>⏱️ زمن المعالجة: ${data.processing_time_ms} مللي ثانية</p>`;
                     
-                    // عرض الصورة الم annotated
                     if (data.annotated_image_base64) {
                         html += `<div style="margin: 15px 0; text-align: center;">
                                     <img src="data:image/jpeg;base64,${data.annotated_image_base64}" style="max-width: 100%; border-radius: 10px;">
                                  </div>`;
                     }
                     
-                    // العيوب
                     if (data.detections.length > 0) {
                         html += '<div>';
                         data.detections.forEach(d => {
@@ -594,7 +611,6 @@ async def test_ui():
                         html += '<p>✅ لم يتم اكتشاف أي عيوب</p>';
                     }
                     
-                    // البارامترات المستخدمة
                     html += '<details><summary>⚙️ البارامترات المستخدمة</summary>';
                     html += '<pre>' + JSON.stringify(data.parameters_used, null, 2) + '</pre>';
                     html += '</details>';
